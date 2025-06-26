@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>日本酒一覧</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+  <link rel="stylesheet" href="style.css">
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, query, onSnapshot, addDoc, updateDoc, doc, deleteDoc, getDocs, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    const firebaseConfig = {
+      apiKey: "AIzaSyAluOeFF-oeeYMf7qe3b2vQyMsO_0oetW8",
+      authDomain: "izakaya-staff-app.firebaseapp.com",
+      projectId: "izakaya-staff-app",
+      storageBucket: "izakaya-staff-app.firebasestorage.app",
+      messagingSenderId: "44853351550",
+      appId: "1:44853351550:web:3b089746d5031ce82cf42f",
+      measurementId: "G-9HX2780DVZ"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let sakeItems = [];
+
+    // 初回のみ読み込み
+    async function fetchSakeList() {
+      const sakeCol = collection(db, 'sake');
+      const q = query(sakeCol);
+      const snap = await getDocs(q);
+      sakeItems = [];
+      snap.forEach(d => sakeItems.push({id: d.id, ...d.data()}));
+      renderSakeList();
+    }
+
+    // 在庫有無の変更や編集・追加時はFirestoreに即時書き込み、fetchSakeList()で再取得
+    function showSakeDialog(mode, item, onSave, onDelete) {
+      const dialog = document.createElement('div');
+      dialog.className = 'inv-dialog-bg';
+      dialog.innerHTML = `
+        <div class="inv-dialog">
+          <div class="inv-dialog-title">${mode} 日本酒</div>
+          <div class="inv-dialog-body">
+            <input class="inv-input" placeholder="銘柄名" value="${item.name ?? ''}">
+            <input class="inv-input" placeholder="タグ（カンマ区切り）" value="${Array.isArray(item.tags) ? item.tags.join(', ') : ''}">
+            <input class="inv-input" placeholder="値段" type="number" value="${item.price ?? 0}">
+            <input class="inv-input" placeholder="画像URL" value="${item.imageUrl ?? ''}">
+            <input class="inv-input" placeholder="紹介動画URL" value="${item.videoUrl ?? ''}">
+            <textarea class="inv-input" placeholder="紹介文" rows="3">${item.description ?? ''}</textarea>
+            <label style="margin-top:0.5em;">
+              <input type="checkbox" class="inv-input" id="sake-stock-checkbox" ${item.inStock === false ? '' : 'checked'}>
+              在庫あり
+            </label>
+          </div>
+          <div class="inv-dialog-actions">
+            ${onDelete ? `<button class="del-btn" id="del-btn">削除</button>` : ''}
+            <button class="cancel-btn">キャンセル</button>
+            <button class="save-btn">${mode}</button>
+          </div>
+          <div style="font-size:0.95em;color:#888;margin-top:4px;">
+            ※YouTube動画は「埋め込みURL」を入力してください（例: https://www.youtube.com/embed/xxxxxx）
+          </div>
+          ${item.videoUrl ? `<div class="sake-video-wrap"><iframe src="${item.videoUrl}" frameborder="0" allowfullscreen style="width:100%;max-height:200px;margin-top:10px;"></iframe></div>` : ''}
+        </div>
+      `;
+      document.body.appendChild(dialog);
+      const [name, tags, price, imageUrl, videoUrl, description] = dialog.querySelectorAll('.inv-input');
+      const inStockCheckbox = dialog.querySelector('#sake-stock-checkbox');
+      dialog.querySelector('.cancel-btn').onclick = () => dialog.remove();
+      if (onDelete) {
+        const delBtn = dialog.querySelector('#del-btn');
+        if (delBtn) {
+          delBtn.onclick = async () => {
+            // 削除確認ダイアログ
+            const ok = await new Promise(resolve => {
+              const confirmBg = document.createElement('div');
+              confirmBg.className = 'inv-dialog-bg';
+              confirmBg.innerHTML = `
+                <div class="inv-dialog">
+                  <div class="inv-dialog-title">削除確認</div>
+                  <div class="inv-dialog-body">本当に削除しますか？</div>
+                  <div class="inv-dialog-actions">
+                    <button class="cancel-btn">いいえ</button>
+                    <button class="save-btn">はい</button>
+                  </div>
+                </div>
+              `;
+              document.body.appendChild(confirmBg);
+              confirmBg.querySelector('.cancel-btn').onclick = () => {
+                confirmBg.remove();
+                resolve(false);
+              };
+              confirmBg.querySelector('.save-btn').onclick = () => {
+                confirmBg.remove();
+                resolve(true);
+              };
+            });
+            if (ok) {
+              await onDelete();
+              dialog.remove();
+            }
+          };
+        }
+      }
+      dialog.querySelector('.save-btn').onclick = async () => {
+        const sakeData = {
+          name: name.value,
+          tags: tags.value.split(',').map(e => e.trim()).filter(Boolean),
+          price: parseInt(price.value) || 0,
+          imageUrl: imageUrl.value,
+          videoUrl: videoUrl.value,
+          description: description.value,
+          inStock: inStockCheckbox.checked
+        };
+        await onSave(sakeData);
+        dialog.remove();
+
+        // --- ここからメニュー管理・計算機にも自動登録 ---
+        // menu_itemsコレクションに同名がなければ追加
+        const menuCol = collection(db, 'menu_items');
+        const q = query(menuCol, where('name', '==', sakeData.name));
+        const snap = await getDocs(q);
+        if (snap.empty) {
+          // ドリンクカテゴリ・日本酒サブカテゴリで追加
+          await addDoc(menuCol, {
+            name: sakeData.name,
+            price: sakeData.price,
+            category: 'ドリンク',
+            subCategory: '日本酒',
+            order: 999 // 必要なら適宜
+          });
+        }
+        // --- ここまで自動登録 ---
+        await fetchSakeList();
+      };
+    }
+
+    // 一覧描画
+    function renderSakeList() {
+      const list = document.getElementById('sake-list');
+      if (sakeItems.length === 0) {
+        list.innerHTML = `<div style="color:gray;text-align:center;margin:2em;">日本酒が登録されていません</div>`;
+      } else {
+        list.innerHTML = sakeItems.map(data => `
+          <div class="sake-card${data.inStock === false ? ' out-of-stock' : ''}" onclick="window.showSakeDetail('${data.id}')">
+            <div class="sake-img-wrap">
+              ${data.imageUrl
+                ? `<img src="${data.imageUrl}" class="sake-img" alt="画像" onerror="this.style.display='none'">`
+                : `<div class="sake-img-placeholder">🍶</div>`
+              }
+            </div>
+            <div class="sake-card-body">
+              <div class="sake-name">${data.name ?? ''}</div>
+              <div class="sake-tags">
+                ${(Array.isArray(data.tags) ? data.tags : []).map(tag =>
+                  `<span class="sake-tag">${tag}</span>`
+                ).join('')}
+              </div>
+              <div class="sake-price">￥${data.price ?? 0}</div>
+              <div style="margin-top:6px;">
+                <button class="save-btn" style="font-size:0.95em;padding:0.2em 0.8em;"
+                  onclick="event.stopPropagation();window.toggleSakeStock('${data.id}', ${data.inStock === false})">
+                  ${data.inStock === false ? '在庫切替' : '在庫あり→在庫切れに'}
+                </button>
+                ${data.inStock === false ? `<span style="color:#e53935;font-weight:bold;margin-left:8px;">在庫切れ</span>` : ''}
+              </div>
+            </div>
+          </div>
+        `).join('');
+      }
+      window.showSakeDetail = (id) => {
+        const item = sakeItems.find(d => d.id === id);
+        if (item) showDetailDialog(item);
+      };
+      window.toggleSakeStock = async (id, toStock) => {
+        const item = sakeItems.find(i => i.id === id);
+        if (!item) return;
+        try {
+          await updateDoc(doc(db, 'sake', id), { inStock: toStock });
+          item.inStock = toStock;
+          renderSakeList();
+        } catch (e) {
+          alert('在庫状態の更新に失敗しました');
+        }
+      };
+    }
+
+    // 詳細ダイアログ（編集ボタンで編集モードに）
+    function showDetailDialog(item) {
+      const dialog = document.createElement('div');
+      dialog.className = 'inv-dialog-bg';
+      dialog.innerHTML = `
+        <div class="inv-dialog">
+          <div class="inv-dialog-title">日本酒詳細</div>
+          <div style="text-align:center;">
+            ${item.imageUrl
+              ? `<img src="${item.imageUrl}" alt="画像" style="max-width:90%;max-height:180px;border-radius:10px;">`
+              : `<div class="sake-img-placeholder" style="font-size:2.5em;">🍶</div>`
+            }
+          </div>
+          <div style="margin-top:10px;">
+            <div style="font-weight:bold;font-size:1.15em;">${item.name ?? ''}</div>
+            <div class="sake-tags" style="margin:6px 0;">
+              ${(Array.isArray(item.tags) ? item.tags : []).map(tag =>
+                `<span class="sake-tag">${tag}</span>`
+              ).join('')}
+            </div>
+            <div style="color:#e53935;font-weight:bold;">￥${item.price ?? 0}</div>
+            ${item.description ? `<div style="margin:10px 0 0 0; color:#333; font-size:0.98em; white-space:pre-line;">${item.description}</div>` : ''}
+            ${item.videoUrl ? `<div class="sake-video-wrap" style="margin-top:10px;"><iframe src="${item.videoUrl}" frameborder="0" allowfullscreen style="width:100%;max-height:200px;"></iframe></div>` : ''}
+            ${item.inStock === false ? `<div style="color:#e53935;font-weight:bold;">在庫切れ</div>` : ''}
+          </div>
+          <div class="inv-dialog-actions" style="margin-top:10px;">
+            <button class="del-btn" id="del-btn">削除</button>
+            <button class="cancel-btn">閉じる</button>
+            <button class="save-btn" id="edit-btn">編集</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(dialog);
+      dialog.querySelector('.cancel-btn').onclick = () => dialog.remove();
+      dialog.querySelector('#edit-btn').onclick = () => {
+        dialog.remove();
+        showSakeDialog('編集', item, async (data) => {
+          await updateDoc(doc(db, 'sake', item.id), data);
+        }, async () => {
+          try {
+            await deleteDoc(doc(db, 'sake', item.id));
+          } catch (e) {
+            console.warn('削除時エラー:', e);
+          }
+          document.querySelector('.inv-dialog-bg')?.remove();
+          await fetchSakeList();
+        });
+      };
+      dialog.querySelector('#del-btn').onclick = async () => {
+        // 削除確認ダイアログ
+        const ok = await new Promise(resolve => {
+          const confirmBg = document.createElement('div');
+          confirmBg.className = 'inv-dialog-bg';
+          confirmBg.innerHTML = `
+            <div class="inv-dialog">
+              <div class="inv-dialog-title">削除確認</div>
+              <div class="inv-dialog-body">本当に削除しますか？</div>
+              <div class="inv-dialog-actions">
+                <button class="cancel-btn">いいえ</button>
+                <button class="save-btn">はい</button>
+              </div>
+            </div>
+          `;
+          document.body.appendChild(confirmBg);
+          confirmBg.querySelector('.cancel-btn').onclick = () => {
+            confirmBg.remove();
+            resolve(false);
+          };
+          confirmBg.querySelector('.save-btn').onclick = () => {
+            confirmBg.remove();
+            resolve(true);
+          };
+        });
+        if (ok) {
+          try {
+            await deleteDoc(doc(db, 'sake', item.id));
+          } catch (e) {
+            console.warn('削除時エラー:', e);
+          }
+          dialog.remove();
+          await fetchSakeList();
+        }
+      };
+    }
+
+    // ページ初回表示時のみfetchSakeList
+    window.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('sake-add-btn').onclick = () => showSakeDialog('追加', {}, async (data) => {
+        await addDoc(collection(db, 'sake'), data);
+        await fetchSakeList();
+      });
+      fetchSakeList();
+    });
+  </script>
+  <style>
+    .sake-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1em 1em 0.5em 1em;
+      background: #fff;
+      position: sticky; top: 0; z-index: 10;
+    }
+    .sake-title { font-size: 1.2em; font-weight: bold; }
+    .sake-add-btn {
+      background: #e53935; color: #fff; border: none; border-radius: 8px;
+      padding: 0.4em 1.1em; font-size: 1em; cursor: pointer;
+      font-weight: bold;
+    }
+    .sake-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 14px;
+      padding: 1em 1em 90px 1em;
+    }
+    .sake-card {
+      background: #fff8f8;
+      border-radius: 14px;
+      box-shadow: 0 2px 10px #fdd8d8b8;
+      cursor: pointer;
+      display: flex; flex-direction: column;
+      transition: box-shadow .15s;
+      overflow: hidden;
+      min-height: 260px;
+    }
+    .sake-card:hover { box-shadow: 0 4px 22px #fbcacae0; }
+    .sake-img-wrap {
+      width: 100%; aspect-ratio: 1.2/1; background: #fff0f0;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 14px 14px 0 0;
+      overflow: hidden;
+    }
+    .sake-img {
+      width: 100%; height: 120px; object-fit: cover;
+      display: block;
+    }
+    .sake-img-placeholder {
+      font-size: 3em; color: #e53935; text-align: center; width: 100%;
+    }
+    .sake-card-body { padding: 0.7em 0.8em 0.5em; }
+    .sake-name { font-weight: bold; font-size: 1.08em; margin-bottom: 2px;}
+    .sake-tags { margin-bottom: 4px;}
+    .sake-tag {
+      display: inline-block;
+      background: #e3f2fd;
+      color: #1976d2;
+      font-size: 0.92em;
+      border-radius: 7px;
+      padding: 2px 8px;
+      margin-right: 3px;
+      margin-bottom: 2px;
+    }
+    .sake-price {
+      color: #e53935;
+      font-weight: bold;
+      font-size: 1.07em;
+      margin-top: 2px;
+    }
+    /* ダイアログ */
+    .inv-dialog-bg {
+      position: fixed; left: 0; top: 0; width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.18); z-index: 2000;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .inv-dialog {
+      background: #fff; border-radius: 14px; padding: 1.2em 1.3em 1em;
+      min-width: 260px; max-width: 90vw;
+      box-shadow: 0 4px 32px #e5393530;
+      display: flex; flex-direction: column; gap: 0.7em;
+    }
+    .inv-dialog-title { font-weight: bold; font-size: 1.13em; margin-bottom: 0.2em;}
+    .inv-dialog-body { display: flex; flex-direction: column; gap: 0.5em;}
+    .inv-input {
+      font-size: 1em; padding: 0.5em 0.7em; border-radius: 7px; border: 1px solid #ccc;
+      margin-bottom: 0.1em;
+    }
+    .inv-dialog-actions { display: flex; justify-content: flex-end; gap: 0.7em;}
+    .save-btn, .cancel-btn {
+      font-size: 1em; border: none; border-radius: 7px; padding: 0.4em 1.1em;
+      cursor: pointer;
+    }
+    .save-btn { background: #e53935; color: #fff; }
+    .cancel-btn { background: #eee; color: #333; }
+    .sake-video-wrap { margin-top: 10px; }
+    /* ナビバー下固定 */
+    .bottom-navbar {
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      width: 100vw;
+      height: 62px;
+      background: #fff;
+      border-top: 1.5px solid #e53935;
+      display: flex;
+      z-index: 1001;
+      box-shadow: 0 -2px 12px #e5393530;
+      justify-content: space-around;
+      align-items: stretch;
+      padding: 0;
+    }
+    .nav-btn {
+      flex: 1;
+      border: none;
+      background: none;
+      font: inherit;
+      color: #e53935;
+      font-size: 1.02em;
+      padding: 0 0 2px 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      outline: none;
+      cursor: pointer;
+      transition: background 0.13s;
+      border-radius: 0;
+      height: 100%;
+      user-select: none;
+      min-width: 0;
+      white-space: nowrap;
+    }
+    .nav-btn span {
+      font-size: 1.35em;
+      display: block;
+      margin-bottom: 0.1em;
+      line-height: 1;
+      width: 1.5em;
+      text-align: center;
+      vertical-align: middle;
+    }
+    .nav-btn.active, .nav-btn:active {
+      background: #ffeaea;
+      color: #b71c1c;
+      font-weight: bold;
+    }
+    @media (max-width: 640px) {
+      .bottom-navbar { height: 62px; }
+      .nav-btn { font-size: 0.98em; }
+      .sake-list { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 420px) {
+      .sake-list { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sake-header">
+    <span class="sake-title">日本酒一覧</span>
+    <button class="sake-add-btn" id="sake-add-btn">追加</button>
+  </div>
+  <div class="sake-list" id="sake-list"></div>
+  <nav class="bottom-navbar">
+    <button class="nav-btn" id="nav-menu"><span>🍽️</span><br>メニュー計算機</button>
+    <button class="nav-btn" id="nav-inventory"><span>📦</span><br>在庫管理</button>
+    <button class="nav-btn active" id="nav-sake"><span>🍶</span><br>日本酒</button>
+    <button class="nav-btn" id="nav-menu-edit"><span>📝</span><br>メニュー管理</button>
+  </nav>
+  <script>
+    // ナビゲーションボタンのページ遷移
+    document.getElementById('nav-menu').onclick = () => location.href = 'home.html';
+    document.getElementById('nav-inventory').onclick = () => location.href = 'inventory.html';
+    document.getElementById('nav-sake').onclick = () => location.href = 'sake.html';
+    document.getElementById('nav-menu-edit').onclick = () => location.href = 'menu_edit.html';
+  </script>
+</body>
+</html>

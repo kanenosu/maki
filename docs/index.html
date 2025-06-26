@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>居酒屋スタッフログイン</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <style>
+    body {
+      background: #fff;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+    .login-card {
+      background: #fff0f0;
+      padding: 2rem 2.5rem 2.5rem;
+      border-radius: 18px;
+      box-shadow: 0 4px 24px rgba(160,0,0,0.11);
+      width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 1.2rem;
+    }
+    .login-card h1 {
+      text-align: center;
+      color: #b71c1c;
+      margin-bottom: 1rem;
+    }
+    label {
+      font-size: 0.98rem;
+      color: #880000;
+      margin-bottom: 0.2rem;
+    }
+    input[type="text"], input[type="password"] {
+      padding: 0.6rem;
+      font-size: 1.05rem;
+      border-radius: 7px;
+      border: 1px solid #d99;
+      width: 100%;
+      margin-bottom: 0.5rem;
+      box-sizing: border-box;
+    }
+    .login-btn {
+      background: linear-gradient(90deg, #e53935 30%, #b71c1c 100%);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 0.7rem;
+      font-size: 1.1rem;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(200,0,0,0.10);
+      transition: background 0.22s;
+    }
+    .login-btn:hover {
+      background: linear-gradient(90deg, #b71c1c 30%, #e53935 100%);
+    }
+    .error-msg {
+      color: #c62828;
+      text-align: center;
+      font-size: 0.98rem;
+      margin-top: 0.3rem;
+      min-height: 1.3em;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <h1>スタッフログイン</h1>
+    <form id="login-form" autocomplete="off">
+      <div>
+        <label for="user-id">ID</label>
+        <input type="text" id="user-id" name="user-id" required>
+      </div>
+      <div>
+        <label for="password">パスワード</label>
+        <input type="password" id="password" name="password" required>
+      </div>
+      <button type="submit" class="login-btn">ログイン</button>
+      <div class="error-msg" id="error-msg"></div>
+    </form>
+  </div>
+
+  <script>
+    // Flutter側と同じID/PASSをハードコード
+    const allowedIds = ['maki', 'your_id2'];
+    const password = 'makimaki';
+
+    document.getElementById('login-form').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const id = document.getElementById('user-id').value.trim();
+      const pw = document.getElementById('password').value;
+      const err = document.getElementById('error-msg');
+
+      if (allowedIds.includes(id) && pw === password) {
+        err.textContent = "";
+        // ログイン成功時の遷移（ここはダミーページ）
+        window.location.href = "home.html";
+      } else {
+        err.textContent = "IDまたはパスワードが違います";
+      }
+    });
+  </script>
+</body>
+</html>

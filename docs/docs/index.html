@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>居酒屋メニュー計算機</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+  <link rel="stylesheet" href="style.css">
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getFirestore, collection, query, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    const firebaseConfig = {
+      apiKey: "AIzaSyAluOeFF-oeeYMf7qe3b2vQyMsO_0oetW8",
+      authDomain: "izakaya-staff-app.firebaseapp.com",
+      projectId: "izakaya-staff-app",
+      storageBucket: "izakaya-staff-app.firebasestorage.app",
+      messagingSenderId: "44853351550",
+      appId: "1:44853351550:web:3b089746d5031ce82cf42f",
+      measurementId: "G-9HX2780DVZ"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    window.db = db;
+    window.fs = { collection, query, orderBy, onSnapshot };
+  </script>
+</head>
+<body>
+  <div class="app-bar">メニュー計算機</div>
+  <div id="tab-container" class="tab-wrap"></div>
+  <div id="drink-subtab-container" class="tab-wrap" style="display:none;"></div>
+  <div id="menu-panels"></div>
+  <div class="cart-wrap" id="cart-wrap" style="display:none;">
+    <div id="cart-summary" style="font-weight:bold; margin-bottom:0.3em;"></div>
+    <div id="cart-total" style="font-weight:bold; margin-bottom:0.3em; color:#b71c1c;"></div>
+    <div class="cart-title" id="cart-title" style="cursor:pointer; user-select:none;">
+      🛒 選択中メニュー <span id="cart-toggle" style="font-size:0.95em; margin-left:8px;">▼</span>
+    </div>
+    <div id="cart-detail">
+      <table class="cart-table" id="cart-table"></table>
+    </div>
+  </div>
+  <nav class="bottom-navbar">
+  <button class="nav-btn active" id="nav-menu"><span>🍽️</span><br>メニュー計算機</button>
+  <button class="nav-btn" id="nav-inventory"><span>📦</span><br>在庫管理</button>
+  <button class="nav-btn" id="nav-sake"><span>🍶</span><br>日本酒</button>
+  <button class="nav-btn" id="nav-menu-edit"><span>📝</span><br>メニュー管理</button>
+</nav>
+<script>
+  // ナビゲーションボタンのページ遷移
+  document.getElementById('nav-menu').onclick = () => location.href = 'home.html';
+  document.getElementById('nav-inventory').onclick = () => location.href = 'inventory.html';
+  document.getElementById('nav-sake').onclick = () => location.href = 'sake.html';
+  document.getElementById('nav-menu-edit').onclick = () => location.href = 'menu_edit.html';
+</script>
+  <script type="module">
+
+    // カテゴリ＆ドリンクサブカテゴリの固定順
+    const fixedCategories = [
+      'ドリンク', '焼き物', '一品料理', 'おつまみ', 'サラダ', '鍋', 'トッピング', '〆メニュー', 'デザート', 'その他'
+    ];
+    const drinkOrder = [
+      'ビール', 'サワー', 'ハイボール', '日本酒', '焼酎', 'ワイン', 'ソフトドリンク', 'その他'
+    ];
+
+    const tabContainer = document.getElementById('tab-container');
+    const drinkSubtabContainer = document.getElementById('drink-subtab-container');
+    const menuPanels = document.getElementById('menu-panels');
+    let menuItems = []; // 全メニュー
+    let cart = []; // {name, price, qty}
+    let currentTabIdx = 0;
+    let currentDrinkSubIdx = 0;
+    let otoshiAdded = false; // お通し追加フラグ
+
+    // --- Firestoreからメニューアイテムをリアルタイム取得 ---
+    const { db, fs } = window;
+    const { collection, query, orderBy, onSnapshot } = fs;
+
+    const menuCol = collection(db, 'menu_items');
+    const q = query(menuCol, orderBy('category'));
+
+    onSnapshot(q, snap => {
+      menuItems = [];
+      snap.forEach(d => menuItems.push({id:d.id, ...d.data()}));
+      otoshiAdded = false; // メニュー更新時はリセット
+      renderMenuTabs();
+      addOtoshiIfNeeded();
+    });
+
+    // --- お通し自動追加 ---
+    function addOtoshiIfNeeded() {
+      if (otoshiAdded) return;
+      // 「お通し」メニューを検索（名前が「お通し」）
+      const otoshi = menuItems.find(item => item.name === 'お通し');
+      if (otoshi) {
+        // 既にカートに入っていなければ追加
+        if (!cart.some(e => e.name === 'お通し')) {
+          cart.unshift({ name: otoshi.name, price: otoshi.price, qty: 1 });
+        }
+        otoshiAdded = true;
+        renderCart();
+      }
+    }
+
+    // --- カテゴリタブとメニューパネル描画 ---
+    function renderMenuTabs() {
+      // グループ化
+      const grouped = {};
+      menuItems.forEach(item => {
+        const cat = item.category || 'その他';
+        if (!grouped[cat]) grouped[cat] = [];
+        grouped[cat].push(item);
+      });
+
+      // タブ順
+      const categories = fixedCategories.filter(c => grouped[c]);
+      tabContainer.innerHTML = '';
+      menuPanels.innerHTML = '';
+      drinkSubtabContainer.style.display = 'none';
+
+      // タブ作成
+      categories.forEach((cat, idx) => {
+        const btn = document.createElement('button');
+        btn.className = 'tab' + (idx===0?' active':'');
+        btn.textContent = cat;
+        btn.onclick = () => switchTab(idx);
+        tabContainer.appendChild(btn);
+      });
+
+      // パネル作成
+      categories.forEach((cat, idx) => {
+        const panel = document.createElement('div');
+        panel.className = 'menu-panel' + (idx===0?' active':'');
+        panel.dataset.cat = cat;
+        menuPanels.appendChild(panel);
+      });
+
+      // 初期表示
+      renderMenuPanel(categories[0], 0);
+    }
+
+    // --- タブ切替 ---
+    function switchTab(idx) {
+      currentTabIdx = idx;
+      document.querySelectorAll('.tab').forEach((el,i) => el.classList.toggle('active',i===idx));
+      document.querySelectorAll('.menu-panel').forEach((el,i) => el.classList.toggle('active',i===idx));
+      const categories = Array.from(document.querySelectorAll('.tab')).map(el => el.textContent);
+      renderMenuPanel(categories[idx], idx);
+    }
+
+    // --- サブタブ切替 ---
+    function switchDrinkSubTab(subIdx) {
+      currentDrinkSubIdx = subIdx;
+      document.querySelectorAll('.drink-subtab').forEach((el,i) => el.classList.toggle('active',i===subIdx));
+      renderMenuPanel('ドリンク', currentTabIdx, subIdx);
+    }
+
+    // --- メニューパネル描画 ---
+    function renderMenuPanel(cat, idx, drinkSubIdx = 0) {
+      const panel = document.querySelectorAll('.menu-panel')[idx];
+      panel.innerHTML = '';
+      if (cat === 'ドリンク') {
+        // サブカテゴリでグループ化
+        const grouped = {};
+        menuItems.filter(item => item.category === 'ドリンク').forEach(item => {
+          const sub = item.subCategory || 'その他';
+          if (!grouped[sub]) grouped[sub] = [];
+          grouped[sub].push(item);
+        });
+        const sortedSub = [
+          ...drinkOrder.filter(s => grouped[s]),
+          ...Object.keys(grouped).filter(s => !drinkOrder.includes(s)),
+        ];
+        // サブタブ生成
+        drinkSubtabContainer.innerHTML = '';
+        drinkSubtabContainer.style.display = 'flex';
+        sortedSub.forEach((sub, i) => {
+          const btn = document.createElement('button');
+          btn.className = 'tab drink-subtab' + (i===drinkSubIdx?' active':'');
+          btn.textContent = sub;
+          btn.onclick = () => switchDrinkSubTab(i);
+          drinkSubtabContainer.appendChild(btn);
+        });
+        // サブカテゴリのグリッドのみ表示
+        const subCat = sortedSub[drinkSubIdx] || sortedSub[0];
+        if (subCat) {
+          const grid = document.createElement('div');
+          grid.className = 'grid';
+          grouped[subCat].forEach(item => grid.appendChild(buildMenuCard(item)));
+          panel.appendChild(grid);
+        }
+      } else {
+        drinkSubtabContainer.style.display = 'none';
+        // その他カテゴリは通常グリッド
+        const grid = document.createElement('div');
+        grid.className = 'grid';
+        menuItems.filter(item => item.category === cat).forEach(item => grid.appendChild(buildMenuCard(item)));
+        panel.appendChild(grid);
+      }
+    }
+
+    // --- メニューカード ---
+    function buildMenuCard(item) {
+      const card = document.createElement('div');
+      card.className = 'menu-card';
+      card.innerHTML = `<div class="menu-name">${item.name}</div>
+        <div class="menu-price">¥${item.price}</div>`;
+      card.onclick = () => addToCart(item.name, item.price, 1);
+      return card;
+    }
+
+    // --- カートに追加 ---
+    function addToCart(name, price, qty) {
+      // お通し自動追加
+      addOtoshiIfNeeded();
+      const idx = cart.findIndex(e => e.name === name && e.price === price);
+      if (idx >= 0) cart[idx].qty += qty;
+      else cart.push({ name, price, qty });
+      renderCart();
+    }
+
+    // --- カート表示・数量変更 ---
+    let cartExpanded = true;
+    function renderCart() {
+      const wrap = document.getElementById('cart-wrap');
+      const table = document.getElementById('cart-table');
+      const detail = document.getElementById('cart-detail');
+      const toggle = document.getElementById('cart-toggle');
+      const summary = document.getElementById('cart-summary');
+      const totalEl = document.getElementById('cart-total');
+      if (!cart.length) { wrap.style.display = 'none'; return; }
+      wrap.style.display = 'block';
+
+      // 小計・税込み計算
+      const subtotal = cart.reduce((sum,e)=>sum+e.price*e.qty,0);
+      const tax = Math.round(subtotal * 0.1);
+      const total = subtotal + tax;
+      summary.innerHTML = `小計: ¥${subtotal.toLocaleString()}　税込: ¥${total.toLocaleString()}`;
+      totalEl.innerHTML = `合計: <span style="font-size:1.13em;">¥${total.toLocaleString()}</span>`;
+
+      // 展開・格納
+      detail.style.display = cartExpanded ? 'block' : 'none';
+      toggle.textContent = cartExpanded ? '▼' : '▲';
+
+      // --- カートテーブル生成部分を修正 ---
+      table.innerHTML = `
+        <tr>
+          <th>商品名</th><th>単価</th><th>数量</th><th></th><th>小計</th>
+        </tr>
+        ${cart.map((item, i) => `
+          <tr>
+            <td>${item.name}</td>
+            <td>¥${item.price}</td>
+            <td>
+              <button class="qty-btn" onclick="window.changeQty(${i},-1)">−</button>
+              ${item.qty}
+              <button class="qty-btn" onclick="window.changeQty(${i},1)">＋</button>
+            </td>
+            <td><button class="cart-btn" onclick="window.removeFromCart(${i})">削除</button></td>
+            <td>¥${item.price*item.qty}</td>
+          </tr>
+        `).join('')}
+      `;
+      window.changeQty = (i, delta) => {
+        cart[i].qty += delta;
+        if (cart[i].qty < 1) cart[i].qty = 1;
+        renderCart();
+      };
+      window.removeFromCart = i => {
+        cart.splice(i,1);
+        renderCart();
+      };
+    }
+
+    // タイトルクリックで展開/格納
+    document.getElementById('cart-title').onclick = () => {
+      cartExpanded = !cartExpanded;
+      renderCart();
+    };
+  </script>
+</body>
+</html>
