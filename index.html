@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>居酒屋スタッフログイン</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
   <style>
     body {
       background: #fff;
@@ -20,10 +20,14 @@
       padding: 2rem 2.5rem 2.5rem;
       border-radius: 18px;
       box-shadow: 0 4px 24px rgba(160,0,0,0.11);
-      width: 320px;
+      width: 90%;
+      max-width: 380px;
       display: flex;
       flex-direction: column;
       gap: 1.2rem;
+    }
+    @media (max-width: 400px) {
+      .login-card { padding: 1.5rem 1rem 2rem; }
     }
     .login-card h1 {
       text-align: center;
@@ -55,6 +59,7 @@
       cursor: pointer;
       box-shadow: 0 2px 8px rgba(200,0,0,0.10);
       transition: background 0.22s;
+      width: 100%;
     }
     .login-btn:hover {
       background: linear-gradient(90deg, #b71c1c 30%, #e53935 100%);
